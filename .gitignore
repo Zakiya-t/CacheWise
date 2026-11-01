@@ -23,3 +23,5 @@ frontend/dist/
 # Logs
 *.log
 benchmarks/cachewise_matrix
+benchmarks/*.exe
+*.exe
