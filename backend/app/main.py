@@ -95,33 +95,48 @@ def run_native_binary_with_perf(mode: str, size: int, repetitions: int):
     perf_cmd = shutil.which("perf")
     base_cmd = [str(BINARY), mode, str(size), str(repetitions)]
 
+    output = None
+    perf_output = None
+
+    # Try running with perf first
     if perf_cmd:
-        # Measure software performance counters via Linux perf
         command = [
             perf_cmd, "stat",
             "-e", "task-clock,page-faults,context-switches",
             "--"
         ] + base_cmd
-    else:
-        command = base_cmd
+        try:
+            res = subprocess.run(
+                command,
+                cwd=PROJECT,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False
+            )
+            # Check if perf succeeded and produced the expected benchmark output
+            if res.returncode == 0 and "Execution time:" in res.stdout:
+                output = res.stdout
+                perf_output = res.stderr
+        except subprocess.TimeoutExpired:
+            raise HTTPException(status_code=408, detail="Benchmark execution timed out.")
 
-    try:
-        result = subprocess.run(
-            command,
-            cwd=PROJECT,
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=False
-        )
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=408, detail="Benchmark execution timed out.")
-
-    if result.returncode != 0:
-        raise HTTPException(status_code=500, detail=result.stderr or "Benchmark execution failed.")
-
-    output = result.stdout
-    perf_output = result.stderr # perf stat prints its report to stderr
+    # Graceful fallback: run native binary directly if perf is restricted or failed
+    if output is None:
+        try:
+            res = subprocess.run(
+                base_cmd,
+                cwd=PROJECT,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False
+            )
+            if res.returncode != 0:
+                raise HTTPException(status_code=500, detail=res.stderr or "Benchmark execution failed.")
+            output = res.stdout
+        except subprocess.TimeoutExpired:
+            raise HTTPException(status_code=408, detail="Benchmark execution timed out.")
 
     time_match = re.search(r"Execution time:\s*([\d.]+)\s*ms", output)
     checksum_match = re.search(r"Checksum:\s*(\d+)", output)
